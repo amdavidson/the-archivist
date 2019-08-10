@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -15,7 +17,10 @@ var githubCmd = &cobra.Command{
 	Short: "Backup your Github account",
 	Long:  `Backup your Github account to local storage`,
 	Run: func(cmd *cobra.Command, args []string) {
-		githubList()
+		err := ghList()
+		if err != nil {
+			fmt.Println(err)
+		}
 	},
 }
 
@@ -32,24 +37,88 @@ func init() {
 
 }
 
-func githubList() {
-	if Verbose {
-		fmt.Println("Listing", C.Green("Github"), "Repos for", C.Magenta(viper.Get("github.user")))
+type repo struct {
+	FullName    string `json:"full_name"`
+	CloneHTTPS  string `json:"clone_url"`
+	UpdatedDate string `json:"updated_at"`
+	CreatedDate string `json:"created_at"`
+	ArchiveURL  string `json:"archive_url"`
+}
+
+func ghQuery(url string) ([]byte, string, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, "", err
 	}
 
-	githubUrl := "https://api.github.com/users/" + viper.GetString("github.user") + "/repos"
-
-	req, err := http.NewRequest("GET", githubUrl, nil)
-
 	req.Header.Add("Authorization", "Bearer "+viper.GetString("github.token"))
+	req.Header.Add("Accept", "application/vnd.github.v3+json")
 
 	client := http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Println(C.Red("[ERROR]"), err)
+		return nil, "", err
 	}
 
 	body, _ := ioutil.ReadAll(resp.Body)
-	fmt.Printf(string([]byte(body)))
 
+	next := ""
+	//links := strings.Split(resp.Header["Link"], ",")
+	for _, l := range strings.Split(resp.Header["Link"][0], ",") {
+		if strings.Contains(l, `rel="next"`) {
+			str := strings.Split(l, ";")[0]
+			next = strings.Trim(str, " <>")
+		}
+	}
+
+	return body, next, nil
+}
+
+func ghGetRepos() ([]repo, error) {
+	next := "https://api.github.com/user/repos"
+	var repos []repo
+
+	for {
+		var body []byte
+		var err error
+		body, next, err = ghQuery(next)
+		if err != nil {
+			return nil, err
+		}
+		var temp []repo
+		err = json.Unmarshal(body, &temp)
+		if err != nil {
+			return nil, err
+		}
+		repos = append(repos, temp...)
+		if next == "" {
+			break
+		}
+	}
+
+	return repos, nil
+
+}
+
+func ghList() error {
+	if Verbose {
+		fmt.Println("Listing", C.Green("Github"), "Repos for", C.Magenta(viper.Get("github.user")))
+	}
+
+	repos, err := ghGetRepos()
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(viper.GetString("github.user"), "has", len(repos), "repositories.")
+
+	for _, r := range repos {
+
+		fmt.Println(r.FullName)
+		fmt.Println("\tUpdated:", r.UpdatedDate)
+		fmt.Println("\tCreated:", r.CreatedDate)
+
+	}
+
+	return nil
 }
