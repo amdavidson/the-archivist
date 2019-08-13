@@ -8,12 +8,15 @@ import (
 	"github.com/logrusorgru/aurora"
 	homedir "github.com/mitchellh/go-homedir"
 	"github.com/spf13/viper"
+	bolt "go.etcd.io/bbolt"
 )
 
+var db bolt.DB
 var cfgFile string
 var Verbose bool
 var C aurora.Aurora
 var color bool
+var DataDir string
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -25,11 +28,6 @@ var rootCmd = &cobra.Command{
 // Execute adds all child commands to the root command and sets flags appropriately.
 // This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
-	if color {
-		fmt.Println("Use Color")
-	} else {
-		fmt.Println("Do not use color")
-	}
 	C = aurora.NewAurora(color)
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
@@ -45,6 +43,14 @@ func init() {
 	viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
 	rootCmd.PersistentFlags().BoolVar(&color, "colors", true, "Don't be flashy")
 	viper.BindPFlag("colors", rootCmd.PersistentFlags().Lookup("colors"))
+	rootCmd.PersistentFlags().StringVarP(&DataDir, "data", "d", "./data", "Location to store data.")
+	viper.BindPFlag("data", rootCmd.PersistentFlags().Lookup("data"))
+
+	db, err := bolt.Open(data+"/archivist.db", 0600, nil)
+	if err != nil {
+		fmt.Println("Cannot open directory")
+	}
+	defer db.Close()
 }
 
 // initConfig reads in config file and ENV variables if set.
