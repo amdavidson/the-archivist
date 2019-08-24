@@ -8,12 +8,11 @@ import (
 	"os"
 	"strings"
 	"time"
-	"sync"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	//bolt "go.etcd.io/bbolt"
 	"gopkg.in/src-d/go-git.v4"
-	bolt "go.etcd.io/bbolt"
 )
 
 // githubCmd represents the github command
@@ -56,7 +55,7 @@ var backupCmd = &cobra.Command{
 }
 
 type repo struct {
-	FullName    string `json:"full_name"`
+	FullName    string    `json:"full_name"`
 	UpdatedDate time.Time `json:"updated_at"`
 	CreatedDate time.Time `json:"created_at"`
 }
@@ -145,68 +144,73 @@ func ghBackup() error {
 		fmt.Println("Backup up", C.Green("Github"), "repos for", C.Magenta(viper.Get("github.user")))
 	}
 
-	repos, err := ghGetRepos() 
+	repos, err := ghGetRepos()
 	if err != nil {
 		return err
 	}
 
-	var ghBackupDate time.Time
-
-	db.View(func (tx *bolt.Tx) error {
-		b := tx.Bucket([]byte("Github"))
-		ghBackupDate := b.Get([]byte("last-backup"))
-		return nil
-	})
-
-	tasks := make(chan repo)
-
-	// ToDo fix below statements completely non-functioning
-
-	for _, r := range repos {
-		if r.UpdatedDate > ghBackupDate {
-			tasks <- r
-		}
+	c := make(chan error)
+	for _, repo := range repos {
+		go ghBackupRepo(repo, c)
 	}
 
-	var wg sync.WaitGroup 
-	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func () {
-			for repo := range tasks {
-				ghBackupRepo(repo)
-			}
-		}
-	}
-	wg.Wait()
-
-	// End ToDo
-}
-
-func ghBackupRepo(repo) error {
-	if Verbose {
-		fmt.Println("Backing up ", repo.FullName)
-	}
-
-	cloneURL := "https://" + viper.GetString("github.token") + "@github.com/" + repo.FullName
-
-	if Verbose {
-		_, err := git.PlainClone(DataDir+"github", false, &git.CloneOptions{
-			URL:      cloneURL,
-			Progress: os.Stdout,
-		})
-		if err != nil {
+	for i := 0; i < len(repos); i++ {
+		if <-c != nil {
 			return err
 		}
-	} else {
-		_, err := git.PlainClone(DataDir+"github", false, &git.CloneOptions{
+
+	}
+
+	return nil
+}
+
+func ghBackupRepo(r repo, c chan error) {
+
+	var tempErr error
+	tempErr = nil
+
+	if Verbose {
+		fmt.Println("Backing up", C.Blue(r.FullName))
+	}
+
+	backupPath := DataDir + "/github/" + r.FullName
+
+	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
+		if Verbose {
+			fmt.Println(C.Blue(r.FullName), "does not exist. Cloning.")
+		}
+		cloneURL := "https://" + viper.GetString("github.token") + "@github.com/" + r.FullName
+
+		_, err := git.PlainClone(backupPath, false, &git.CloneOptions{
 			URL: cloneURL,
 		})
 		if err != nil {
-			return err
+			tempErr = err
+		}
+	} else {
+		if Verbose {
+			fmt.Println(C.Blue(r.FullName), "cloned already, running git pull")
+		}
+
+		l, err := git.PlainOpen(backupPath)
+		if err != nil {
+			fmt.Println(err)
+			tempErr = err
+		}
+		w, err := l.Worktree()
+		if err != nil {
+			fmt.Println(err)
+			tempErr = err
+		}
+		err = w.Pull(&git.PullOptions{RemoteName: "origin"})
+		if err != nil && err != git.NoErrAlreadyUpToDate {
+			fmt.Println(err)
+			tempErr = err
+		}
+		if Verbose {
+			ref, _ := l.Head()
+			fmt.Println(C.Blue(r.FullName), "updated to", C.Green(ref))
 		}
 	}
-
-	if Verbose {
-		fmt.Println("Done backing up", repo.FullName)
-	}
+	c <- tempErr
 }
