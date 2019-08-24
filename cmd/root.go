@@ -46,7 +46,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&DataDir, "data", "d", "./data", "Location to store data.")
 	viper.BindPFlag("data", rootCmd.PersistentFlags().Lookup("data"))
 
-	db, err := bolt.Open(data+"/archivist.db", 0600, nil)
+	db, err := bolt.Open(DataDir+"/archivist.db", 0600, nil)
 	if err != nil {
 		fmt.Println("Cannot open directory")
 	}
